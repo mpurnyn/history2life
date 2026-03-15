@@ -1,6 +1,13 @@
 # history2life
 A tool for bringing historical figures into the present to talk to students.
 
+# pre-built personas
+- Napoleon,
+- Socrates,
+- Sigmund Freud,
+- Benjamin Franklin,
+- Cao Xueqin
+
 
 # Requirements
 - OS: Arch Linux
