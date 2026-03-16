@@ -4,6 +4,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+import json
 from services.nova_tool_use import BedrockStreamManager, load_persona
 
 router = APIRouter()
@@ -12,12 +13,33 @@ _APP_DIR = Path(__file__).resolve().parent.parent.parent
 templates = Jinja2Templates(directory=str(_APP_DIR / "templates"))
 
 
+def list_personas() -> list[dict]:
+    data_dir = _APP_DIR / "data" / "personas"
+    personas = []
+    for f in sorted(data_dir.glob("*.json")):
+        try:
+            p = json.loads(f.read_text())
+            if "id" in p and "persona_name" in p:
+                personas.append({"id": p["id"], "name": p["persona_name"]})
+        except Exception:
+            continue
+    return personas
+
+
 @router.get("/conversation", response_class=HTMLResponse)
 @router.get("/conversation/{persona_id}", response_class=HTMLResponse)
 async def conversation_page(request: Request, persona_id: int = 1):
+    persona = load_persona(persona_id)
+    persona_name = persona.get("persona_name", "")
     return templates.TemplateResponse(
         "conversation.html",
-        {"request": request, "persona_id": persona_id},
+        {
+            "request": request,
+            "persona_id": persona_id,
+            "persona_name": persona_name,
+            "persona_image_url": f"/static/images/personas/{persona_id}.png",
+            "personas": list_personas(),
+        },
     )
 
 
