@@ -38,3 +38,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Tests
 - test_docker.sh
     - spins up the docker file and runs a quick smoke test
+
+
+# How to run
+After installing all the requirements and adding your keys to an .env file,
+run `sh ./demo.sh` it should build the container, start and give you a link to the local page you can test it with.
+
+
+# Future ideas
+- add a knowledge base for each character to fine tune their responses
+- use something to animate the images or lips in real time as they speak.
+- add users and host demo on website
