@@ -5,3 +5,5 @@ services:
       - "${APP_PORT:-8082}:8082"
     env_file:
       - .env
+    volumes:
+      - ./app/data:/app/data

@@ -3,7 +3,10 @@ import base64
 import json
 import uuid
 import warnings
-import pyaudio
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
 import pytz
 import random
 import hashlib
@@ -25,7 +28,7 @@ warnings.filterwarnings("ignore")
 INPUT_SAMPLE_RATE = 16000
 OUTPUT_SAMPLE_RATE = 24000
 CHANNELS = 1
-FORMAT = pyaudio.paInt16
+FORMAT = pyaudio.paInt16 if pyaudio else None
 CHUNK_SIZE = 1024  # Number of frames per buffer
 
 # Debug mode flag
@@ -195,6 +198,20 @@ class ToolProcessor:
                 "error": f"Unsupported tool: {tool_name}"
             }
 
+def load_persona(persona_id: int) -> dict:
+    """Load a persona JSON by id from app/data/personas/."""
+    from pathlib import Path as _Path
+    data_dir = _Path(__file__).resolve().parent.parent / "data" / "personas"
+    for f in data_dir.glob("*.json"):
+        try:
+            p = json.loads(f.read_text())
+            if p.get("id") == persona_id:
+                return p
+        except Exception:
+            continue
+    return {}
+
+
 class BedrockStreamManager:
     """Manages bidirectional streaming with AWS Bedrock using asyncio"""
     
@@ -345,7 +362,7 @@ class BedrockStreamManager:
                         "sampleRateHertz": 24000,
                         "sampleSizeBits": 16,
                         "channelCount": 1,
-                        "voiceId": "matthew",
+                        "voiceId": self.persona.get("voice_id", "matthew"),
                         "encoding": "base64",
                         "audioType": "SPEECH"
                     },
@@ -363,15 +380,6 @@ class BedrockStreamManager:
                                     }
                                 }
                             },
-                            {
-                                "toolSpec": {
-                                    "name": "trackOrderTool",
-                                    "description": "Retrieves real-time order tracking information and detailed status updates for customer orders by order ID. Provides estimated delivery dates. Use this tool when customers ask about their order status or delivery timeline.",
-                                    "inputSchema": {
-                                    "json": get_order_tracking_schema
-                                    }
-                                }
-                            }
                         ]
                     }
                 }
@@ -399,10 +407,11 @@ class BedrockStreamManager:
         }
         return json.dumps(tool_result_event)
    
-    def __init__(self, model_id='amazon.nova-2-sonic-v1:0', region='us-east-1'):
+    def __init__(self, model_id='amazon.nova-2-sonic-v1:0', region='us-east-1', persona: dict = None):
         """Initialize the stream manager."""
         self.model_id = model_id
         self.region = region
+        self.persona = persona or {}
         
         # Replace RxPy subjects with asyncio queues
         self.audio_input_queue = asyncio.Queue()
@@ -432,9 +441,16 @@ class BedrockStreamManager:
 
         # Add a tool processor
         self.tool_processor = ToolProcessor()
-        
+
         # Add tracking for in-progress tool calls
         self.pending_tool_tasks = {}
+
+        # Token usage tracking
+        self.tokens_input = 0
+        self.tokens_output = 0
+
+        # Session timing
+        self.session_start_time = None
 
     def _initialize_client(self):
         """Initialize the Bedrock client."""
@@ -453,16 +469,34 @@ class BedrockStreamManager:
         try:
             self.stream_response = await time_it_async("invoke_model_with_bidirectional_stream", lambda : self.bedrock_client.invoke_model_with_bidirectional_stream( InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_id)))
             self.is_active = True
-            default_system_prompt = "You are a warm, professional, and helpful male AI assistant. Give accurate answers that sound natural, direct, and human. Start by answering the user's question clearly in 1–2 sentences. Then, expand only enough to make the answer understandable, staying within 3–5 short sentences total. Avoid sounding like a lecture or essay." \
-            "When reading order numbers, please read each digit individually, separated by pauses. For example, order #1234 should be read as 'order number one-two-three-four' rather than 'order number one thousand two hundred thirty-four'."
-            
+            self.session_start_time = datetime.datetime.now(datetime.timezone.utc)
+
+            fallback_prompt = (
+                "You are a warm, professional, and helpful assistant. "
+                "Give accurate answers that sound natural, direct, and human. "
+                "Keep responses to 1-3 short sentences."
+            )
+            system_prompt = self.persona.get("system_prompt", fallback_prompt)
+
+            session_start_event = json.dumps({
+                "event": {
+                    "sessionStart": {
+                        "inferenceConfiguration": {
+                            "maxTokens": self.persona.get("max_tokens", 1024),
+                            "topP":      self.persona.get("top_p", 0.9),
+                            "temperature": self.persona.get("temperature", 0.7),
+                        }
+                    }
+                }
+            })
+
             # Send initialization events
             prompt_event = self.start_prompt()
             text_content_start = self.TEXT_CONTENT_START_EVENT % (self.prompt_name, self.content_name, "SYSTEM")
-            text_content = self.TEXT_INPUT_EVENT % (self.prompt_name, self.content_name, default_system_prompt)
+            text_content = self.TEXT_INPUT_EVENT % (self.prompt_name, self.content_name, system_prompt)
             text_content_end = self.CONTENT_END_EVENT % (self.prompt_name, self.content_name)
-            
-            init_events = [self.START_SESSION_EVENT, prompt_event, text_content_start, text_content, text_content_end]
+
+            init_events = [session_start_event, prompt_event, text_content_start, text_content, text_content_end]
             
             for event in init_events:
                 await self.send_raw_event(event)
@@ -667,7 +701,10 @@ class BedrockStreamManager:
                                     # Handle end of conversation, no more response will be generated
                                     debug_print("End of response sequence")
                                 elif 'usageEvent' in json_data['event']:
-                                    debug_print(f"UsageEvent: {json_data['event']}")
+                                    usage = json_data['event']['usageEvent']
+                                    self.tokens_input += usage.get('inputTokens', 0)
+                                    self.tokens_output += usage.get('outputTokens', 0)
+                                    print(f"[tokens] input={self.tokens_input} output={self.tokens_output} total={self.tokens_input + self.tokens_output}")
                             # Put the response in the output queue for other components
                             await self.output_queue.put(json_data)
                         except json.JSONDecodeError:
@@ -743,11 +780,66 @@ class BedrockStreamManager:
             except Exception as send_error:
                 debug_print(f"Failed to send error response: {str(send_error)}")
     
+    def _save_session_stats(self):
+        """Append this session's stats to the local usage log."""
+        import json as _json
+        from pathlib import Path as _Path
+
+        stats_file = _Path(__file__).resolve().parent.parent / "data" / "usage.json"
+        stats_file.parent.mkdir(parents=True, exist_ok=True)
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        duration_s = (now - self.session_start_time).total_seconds() if self.session_start_time else 0
+        duration_min = duration_s / 60 if duration_s > 0 else 0
+        total_tokens = self.tokens_input + self.tokens_output
+        tokens_per_min = round(total_tokens / duration_min, 2) if duration_min > 0 else 0
+
+        # Load existing data or start fresh
+        if stats_file.exists():
+            try:
+                data = _json.loads(stats_file.read_text())
+            except Exception:
+                data = {}
+        else:
+            data = {}
+
+        data.setdefault("sessions", 0)
+        data.setdefault("all_time", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "duration_seconds": 0})
+        data.setdefault("history", [])
+
+        data["sessions"] += 1
+
+        at = data["all_time"]
+        at["input_tokens"]    += self.tokens_input
+        at["output_tokens"]   += self.tokens_output
+        at["total_tokens"]    += total_tokens
+        at["duration_seconds"] = round(at["duration_seconds"] + duration_s, 2)
+        at_min = at["duration_seconds"] / 60
+        at["avg_tokens_per_minute"] = round(at["total_tokens"] / at_min, 2) if at_min > 0 else 0
+
+        data["history"].append({
+            "session":            data["sessions"],
+            "date":               self.session_start_time.strftime("%Y-%m-%d %H:%M:%S UTC") if self.session_start_time else "unknown",
+            "duration_seconds":   round(duration_s, 2),
+            "input_tokens":       self.tokens_input,
+            "output_tokens":      self.tokens_output,
+            "total_tokens":       total_tokens,
+            "tokens_per_minute":  tokens_per_min,
+        })
+
+        stats_file.write_text(_json.dumps(data, indent=2))
+        print(
+            f"[session #{data['sessions']}] "
+            f"duration={round(duration_s)}s  "
+            f"tokens={total_tokens} ({tokens_per_min}/min)  "
+            f"all-time: {at['total_tokens']} tokens across {data['sessions']} sessions"
+        )
+
     async def close(self):
         """Close the stream properly."""
         if not self.is_active:
             return
-        
+
         # Cancel any pending tool tasks
         for task in self.pending_tool_tasks.values():
             task.cancel()
@@ -761,6 +853,8 @@ class BedrockStreamManager:
 
         if self.stream_response:
             await self.stream_response.input_stream.close()
+
+        self._save_session_stats()
 
 class AudioStreamer:
     """Handles continuous microphone input and audio output using separate streams."""
@@ -939,7 +1033,8 @@ async def main(debug=False):
     DEBUG = debug
 
     # Create stream manager
-    stream_manager = BedrockStreamManager(model_id='amazon.nova-2-sonic-v1:0', region='us-east-1')
+    persona = load_persona(1)
+    stream_manager = BedrockStreamManager(model_id='amazon.nova-2-sonic-v1:0', region='us-east-1', persona=persona)
 
     # Create audio streamer
     audio_streamer = AudioStreamer(stream_manager)

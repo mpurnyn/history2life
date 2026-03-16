@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: black;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #btn {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: white;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s, background 0.3s;
+            color: black;
+        }
+        #btn:hover { transform: scale(1.05); }
+        #btn:active { transform: scale(0.95); }
+        #btn.active {
+            background: #ff3b3b;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(255, 59, 59, 0.5); }
+            50%       { box-shadow: 0 0 0 24px rgba(255, 59, 59, 0); }
+        }
+        #btn svg { width: 48px; height: 48px; }
+    </style>
+</head>
+<body>
+    <button id="btn">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <rect x="9" y="1" width="6" height="13" rx="3" fill="currentColor"/>
+            <path d="M5 11c0 3.866 3.134 7 7 7s7-3.134 7-7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <line x1="9"  y1="22" x2="15" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+    </button>
+
+    <script>
+        const btn = document.getElementById('btn');
+        const personaId = {{ persona_id }};
+
+        let ws = null;
+        let audioCtxIn = null;
+        let audioCtxOut = null;
+        let mediaStream = null;
+        let scriptProcessor = null;
+        let isActive = false;
+        let nextStartTime = 0;
+
+        btn.addEventListener('click', async () => {
+            isActive ? stopConversation() : await startConversation();
+        });
+
+        async function startConversation() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            } catch {
+                alert('Microphone access is required.');
+                return;
+            }
+
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${proto}//${location.host}/ws/conversation/${personaId}`);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                isActive = true;
+                btn.classList.add('active');
+
+                // Capture mic → 16kHz Int16 PCM → WebSocket
+                audioCtxIn = new AudioContext({ sampleRate: 16000 });
+                const source = audioCtxIn.createMediaStreamSource(mediaStream);
+                scriptProcessor = audioCtxIn.createScriptProcessor(1024, 1, 1);
+                scriptProcessor.onaudioprocess = (e) => {
+                    if (ws.readyState !== WebSocket.OPEN) return;
+                    const f32 = e.inputBuffer.getChannelData(0);
+                    const i16 = new Int16Array(f32.length);
+                    for (let i = 0; i < f32.length; i++) {
+                        i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32768));
+                    }
+                    ws.send(i16.buffer);
+                };
+                source.connect(scriptProcessor);
+                scriptProcessor.connect(audioCtxIn.destination);
+
+                // Output playback at 24kHz
+                audioCtxOut = new AudioContext({ sampleRate: 24000 });
+                nextStartTime = 0;
+            };
+
+            ws.onmessage = (e) => {
+                const i16 = new Int16Array(e.data);
+                if (!i16.length || !audioCtxOut) return;
+                const f32 = new Float32Array(i16.length);
+                for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768.0;
+                const buf = audioCtxOut.createBuffer(1, f32.length, 24000);
+                buf.copyToChannel(f32, 0);
+                const src = audioCtxOut.createBufferSource();
+                src.buffer = buf;
+                src.connect(audioCtxOut.destination);
+                const now = audioCtxOut.currentTime;
+                const startAt = Math.max(nextStartTime, now + 0.05);
+                src.start(startAt);
+                nextStartTime = startAt + buf.duration;
+            };
+
+            ws.onclose = () => { if (isActive) stopConversation(); };
+            ws.onerror = () => { if (isActive) stopConversation(); };
+        }
+
+        function stopConversation() {
+            isActive = false;
+            btn.classList.remove('active');
+            ws?.close(); ws = null;
+            scriptProcessor?.disconnect(); scriptProcessor = null;
+            audioCtxIn?.close(); audioCtxIn = null;
+            audioCtxOut?.close(); audioCtxOut = null;
+            mediaStream?.getTracks().forEach(t => t.stop()); mediaStream = null;
+            nextStartTime = 0;
+        }
+    </script>
+</body>
+</html>
