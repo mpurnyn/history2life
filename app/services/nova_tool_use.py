@@ -493,7 +493,15 @@ class BedrockStreamManager:
             # Send initialization events
             prompt_event = self.start_prompt()
             text_content_start = self.TEXT_CONTENT_START_EVENT % (self.prompt_name, self.content_name, "SYSTEM")
-            text_content = self.TEXT_INPUT_EVENT % (self.prompt_name, self.content_name, system_prompt)
+            text_content = json.dumps({
+                "event": {
+                    "textInput": {
+                        "promptName": self.prompt_name,
+                        "contentName": self.content_name,
+                        "content": system_prompt
+                    }
+                }
+            })
             text_content_end = self.CONTENT_END_EVENT % (self.prompt_name, self.content_name)
 
             init_events = [session_start_event, prompt_event, text_content_start, text_content, text_content_end]
