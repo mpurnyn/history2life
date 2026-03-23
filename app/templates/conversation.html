@@ -96,14 +96,23 @@
         }
         #persona-select option { background: #1a1a1a; color: white; }
         #persona-select:hover { border-color: rgba(255,255,255,0.4); }
+        #sign-out-btn {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: transparent;
+            color: rgba(255,255,255,0.4);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+        #sign-out-btn:hover { color: white; border-color: rgba(255,255,255,0.4); }
     </style>
 </head>
 <body>
-    <select id="persona-select">
-        {% for p in personas %}
-        <option value="{{ p.id }}" {% if p.id == persona_id %}selected{% endif %}>{{ p.name }}</option>
-        {% endfor %}
-    </select>
     <div id="persona-info">
         <img id="persona-image" src="{{ persona_image_url }}" alt="{{ persona_name }}"
              onerror="this.style.display='none'; document.getElementById('persona-image-placeholder').style.display='flex';">
@@ -118,6 +127,12 @@
             <line x1="9"  y1="22" x2="15" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
     </button>
+    <select id="persona-select">
+        {% for p in personas %}
+        <option value="{{ p.id }}" {% if p.id == persona_id %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+    </select>
+    <a href="/auth/logout"><button id="sign-out-btn">Sign out</button></a>
 
     <script>
         const btn = document.getElementById('btn');

@@ -7,3 +7,4 @@ services:
       - .env
     volumes:
       - ./app/data:/app/data
+      - ./firebase-adminsdk.json:/app/firebase-adminsdk.json:ro

@@ -209,3 +209,4 @@ __marimo__/
 
 # app specific
 app/data/usage.json
+*firebase-adminsdk*.json

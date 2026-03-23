@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import json
@@ -29,6 +29,8 @@ def list_personas() -> list[dict]:
 @router.get("/conversation", response_class=HTMLResponse)
 @router.get("/conversation/{persona_id}", response_class=HTMLResponse)
 async def conversation_page(request: Request, persona_id: int = 1):
+    if not request.session.get("user"):
+        return RedirectResponse(url="/login")
     persona = load_persona(persona_id)
     persona_name = persona.get("persona_name", "")
     return templates.TemplateResponse(
