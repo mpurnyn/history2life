@@ -32,9 +32,9 @@ async def conversation_page(request: Request, persona_id: int = 1):
     persona = load_persona(persona_id)
     persona_name = persona.get("persona_name", "")
     return templates.TemplateResponse(
+        request,
         "conversation.html",
         {
-            "request": request,
             "persona_id": persona_id,
             "persona_name": persona_name,
             "persona_image_url": f"/static/images/personas/{persona_id}.png",
