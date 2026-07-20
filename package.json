@@ -1,0 +1,15 @@
+{
+  "name": "history2life-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild app/frontend/conversation.js --bundle --format=iife --platform=browser --target=es2020 --minify --outfile=app/static/js/conversation.bundle.js",
+    "test": "node --test tests/frontend/*.test.js"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

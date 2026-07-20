@@ -7,47 +7,79 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: black;
+            background:
+                radial-gradient(circle at 50% 35%, rgba(37, 92, 123, 0.42), transparent 42%),
+                linear-gradient(180deg, #07121b 0%, #020508 72%, #000 100%);
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            gap: 32px;
-            height: 100vh;
+            gap: 18px;
+            min-height: 100vh;
+            min-height: 100dvh;
             overflow: hidden;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
         #persona-info {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 16px;
+            gap: 10px;
+        }
+        #avatar-stage {
+            position: relative;
+            width: min(500px, 84vw);
+            height: min(500px, 58vh);
+            min-height: 300px;
+            overflow: hidden;
+            border: 1px solid rgba(151, 211, 255, 0.22);
+            border-radius: 38% 38% 46% 46% / 30% 30% 42% 42%;
+            background:
+                radial-gradient(circle at 50% 42%, rgba(88, 164, 208, 0.22), transparent 48%),
+                rgba(3, 10, 15, 0.62);
+            box-shadow:
+                inset 0 0 55px rgba(80, 175, 225, 0.08),
+                0 24px 80px rgba(0, 0, 0, 0.5);
+        }
+        #avatar-stage::after {
+            content: '';
+            position: absolute;
+            left: 12%;
+            right: 12%;
+            bottom: 4%;
+            height: 7%;
+            border-radius: 50%;
+            background: rgba(75, 169, 218, 0.16);
+            filter: blur(12px);
+            pointer-events: none;
+        }
+        #avatar-canvas,
+        #avatar-canvas canvas,
+        #persona-image {
+            width: 100%;
+            height: 100%;
+        }
+        #avatar-canvas canvas {
+            display: block;
         }
         #persona-image {
-            width: 500px;
-            height: 500px;
-            border-radius: 50%;
+            display: block;
             object-fit: cover;
-            border: 2px solid rgba(255,255,255,0.15);
         }
-        #persona-image-placeholder {
-            display: none;
-            width: 500px;
-            height: 500px;
-            border-radius: 50%;
-            border: 2px solid rgba(255,255,255,0.15);
-            align-items: center;
-            justify-content: center;
-            color: rgba(255,255,255,0.35);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            font-size: 1rem;
-            font-style: italic;
+        [hidden] {
+            display: none !important;
         }
         #persona-name {
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            font-size: 1.25rem;
-            font-weight: 300;
-            letter-spacing: 0.05em;
+            font-size: clamp(1.15rem, 4vw, 1.45rem);
+            font-weight: 500;
+            letter-spacing: 0.065em;
+        }
+        #conversation-status {
+            min-height: 1.25em;
+            color: rgba(224, 240, 250, 0.65);
+            font-size: 0.86rem;
+            letter-spacing: 0.02em;
         }
         #btn {
             width: 60px;
@@ -64,6 +96,7 @@
         }
         #btn:hover { transform: scale(1.05); }
         #btn:active { transform: scale(0.95); }
+        #btn:disabled { cursor: wait; opacity: 0.72; }
         #btn.active {
             background: #ff3b3b;
             color: white;
@@ -110,16 +143,29 @@
             cursor: pointer;
         }
         #sign-out-btn:hover { color: white; border-color: rgba(255,255,255,0.4); }
+        @media (max-width: 600px), (max-height: 720px) {
+            body { gap: 12px; padding: 58px 12px 14px; }
+            #avatar-stage {
+                width: min(420px, 92vw);
+                height: min(420px, 54vh);
+                min-height: 250px;
+            }
+            #persona-select { top: 12px; right: 12px; max-width: 54vw; }
+            #sign-out-btn { top: 12px; left: 12px; }
+            #btn { width: 56px; height: 56px; }
+        }
     </style>
 </head>
-<body>
+<body data-persona-id="{{ persona_id }}">
     <div id="persona-info">
-        <img id="persona-image" src="{{ persona_image_url }}" alt="{{ persona_name }}"
-             onerror="this.style.display='none'; document.getElementById('persona-image-placeholder').style.display='flex';">
-        <div id="persona-image-placeholder">Image coming soon</div>
+        <div id="avatar-stage">
+            <div id="avatar-canvas" aria-live="off"></div>
+            <img id="persona-image" src="{{ persona_image_url }}" alt="Portrait of {{ persona_name }}" hidden>
+        </div>
         <span id="persona-name">{{ persona_name }}</span>
+        <span id="conversation-status" role="status" aria-live="polite">Tap the microphone to start.</span>
     </div>
-    <button id="btn">
+    <button id="btn" type="button" aria-label="Start conversation" aria-pressed="false">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <rect x="9" y="1" width="6" height="13" rx="3" fill="currentColor"/>
             <path d="M5 11c0 3.866 3.134 7 7 7s7-3.134 7-7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
@@ -133,95 +179,6 @@
         {% endfor %}
     </select>
     <a href="/auth/logout"><button id="sign-out-btn">Sign out</button></a>
-
-    <script>
-        const btn = document.getElementById('btn');
-        const personaId = {{ persona_id }};
-
-        let ws = null;
-        let audioCtxIn = null;
-        let audioCtxOut = null;
-        let mediaStream = null;
-        let scriptProcessor = null;
-        let isActive = false;
-        let nextStartTime = 0;
-
-        document.getElementById('persona-select').addEventListener('change', (e) => {
-            if (isActive) stopConversation();
-            window.location.href = `/conversation/${e.target.value}`;
-        });
-
-        btn.addEventListener('click', async () => {
-            isActive ? stopConversation() : await startConversation();
-        });
-
-        async function startConversation() {
-            try {
-                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            } catch {
-                alert('Microphone access is required.');
-                return;
-            }
-
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${proto}//${location.host}/ws/conversation/${personaId}`);
-            ws.binaryType = 'arraybuffer';
-
-            ws.onopen = () => {
-                isActive = true;
-                btn.classList.add('active');
-
-                // Capture mic → 16kHz Int16 PCM → WebSocket
-                audioCtxIn = new AudioContext({ sampleRate: 16000 });
-                const source = audioCtxIn.createMediaStreamSource(mediaStream);
-                scriptProcessor = audioCtxIn.createScriptProcessor(1024, 1, 1);
-                scriptProcessor.onaudioprocess = (e) => {
-                    if (ws.readyState !== WebSocket.OPEN) return;
-                    const f32 = e.inputBuffer.getChannelData(0);
-                    const i16 = new Int16Array(f32.length);
-                    for (let i = 0; i < f32.length; i++) {
-                        i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32768));
-                    }
-                    ws.send(i16.buffer);
-                };
-                source.connect(scriptProcessor);
-                scriptProcessor.connect(audioCtxIn.destination);
-
-                // Output playback at 24kHz
-                audioCtxOut = new AudioContext({ sampleRate: 24000 });
-                nextStartTime = 0;
-            };
-
-            ws.onmessage = (e) => {
-                const i16 = new Int16Array(e.data);
-                if (!i16.length || !audioCtxOut) return;
-                const f32 = new Float32Array(i16.length);
-                for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768.0;
-                const buf = audioCtxOut.createBuffer(1, f32.length, 24000);
-                buf.copyToChannel(f32, 0);
-                const src = audioCtxOut.createBufferSource();
-                src.buffer = buf;
-                src.connect(audioCtxOut.destination);
-                const now = audioCtxOut.currentTime;
-                const startAt = Math.max(nextStartTime, now + 0.05);
-                src.start(startAt);
-                nextStartTime = startAt + buf.duration;
-            };
-
-            ws.onclose = () => { if (isActive) stopConversation(); };
-            ws.onerror = () => { if (isActive) stopConversation(); };
-        }
-
-        function stopConversation() {
-            isActive = false;
-            btn.classList.remove('active');
-            ws?.close(); ws = null;
-            scriptProcessor?.disconnect(); scriptProcessor = null;
-            audioCtxIn?.close(); audioCtxIn = null;
-            audioCtxOut?.close(); audioCtxOut = null;
-            mediaStream?.getTracks().forEach(t => t.stop()); mediaStream = null;
-            nextStartTime = 0;
-        }
-    </script>
+    <script src="/static/js/conversation.bundle.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,15 @@
+.git
+.gitignore
+.hermes
+.venv
+node_modules
+__pycache__
+.pytest_cache
+.env
+*.log
+certs
+firebase-adminsdk.json
+app/data/usage.json
+docs
+sonic_demo
+sonic_tool_demo
